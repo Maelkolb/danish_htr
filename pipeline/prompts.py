@@ -6,11 +6,6 @@ independently of the Python plumbing.
 
 # Main per-page transcription prompt.
 #
-# Design notes:
-#   * Anchored in a clear expert persona (paleographer) — Gemini 3 follows
-#     concise direct instructions better than verbose role-play.
-#   * Explicit uncertainty markers prevent confident hallucination, which
-#     is the #1 failure mode on damaged Kurrent pages.
 #   * YAML front matter is requested so the downstream TEI converter can
 #     extract structured metadata deterministically.
 #   * Output format is fully specified — no commentary, no markdown
