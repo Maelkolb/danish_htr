@@ -249,15 +249,76 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
-def _embed_image(image_path: Path) -> str:
-    data = base64.b64encode(image_path.read_bytes()).decode("ascii")
-    suffix = image_path.suffix.lower()
-    mime = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-    }.get(suffix, "image/png")
+
+from __future__ import annotations
+ 
+import base64
+import io
+from pathlib import Path
+ 
+# ── tuneable constants ────────────────────────────────────────────────────────
+ 
+MAX_LONG_EDGE: int = 1_600
+ 
+# WebP quality 0-100.  50 is aggressive but still legible for document text.
+# Raise to 60-65 if you see visible artefacts on fine print or thin strokes.
+WEBP_QUALITY: int = 50
+ 
+JPEG_QUALITY: int = 55
+ 
+GREYSCALE: bool = True
+ 
+# ─────────────────────────────────────────────────────────────────────────────
+ 
+ 
+def _embed_image(image_path: Path) -> str:  # noqa: D401
+    """Return a data-URI for *image_path* with aggressive lossy compression.
+ 
+    This is a drop-in replacement for the original _embed_image function.
+    The signature and return type are identical; only the encoding strategy
+    changes.
+    """
+    from PIL import Image  # local import so the rest of the module loads without Pillow
+ 
+    img = Image.open(image_path)
+ 
+    # ── 1. flatten to RGB (or L) ──────────────────────────────────────────────
+    # RGBA / P (palette) modes can't be saved as JPEG / WebP without conversion.
+    if img.mode == "RGBA":
+        # paste onto white background to avoid black halos on semi-transparent px
+        bg = Image.new("RGB", img.size, (255, 255, 255))
+        bg.paste(img, mask=img.split()[3])
+        img = bg
+    elif img.mode not in ("RGB", "L"):
+        img = img.convert("RGB")
+ 
+    # ── 2. optional greyscale conversion ─────────────────────────────────────
+    if GREYSCALE and img.mode == "RGB":
+        img = img.convert("L")
+ 
+    # ── 3. downscale if needed (preserves aspect ratio) ──────────────────────
+    long_edge = max(img.width, img.height)
+    if long_edge > MAX_LONG_EDGE:
+        scale = MAX_LONG_EDGE / long_edge
+        new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
+        img = img.resize(new_size, Image.LANCZOS)
+ 
+    # ── 4. encode: WebP preferred, JPEG as fallback ──────────────────────────
+    buf = io.BytesIO()
+    try:
+        img.save(buf, format="WEBP", quality=WEBP_QUALITY, method=4)
+        # method=4 balances encode speed vs compression (0=fastest, 6=best)
+        mime = "image/webp"
+    except (KeyError, OSError):
+        # WebP encoder not available in this Pillow build → fall back to JPEG
+        if img.mode == "L":
+            img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
+        else:
+            img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True,
+                     progressive=True)
+        mime = "image/jpeg"
+ 
+    data = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:{mime};base64,{data}"
 
 
