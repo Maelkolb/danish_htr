@@ -1,10 +1,5 @@
 """Convert pipeline markdown (YAML front-matter + body) to TEI P5 XML.
 
-The structure of the document is carried entirely by the YAML front matter
-(see ``prompts.py`` for the schema). This module is a mechanical mapper
-from that schema to TEI elements — no heuristics, no inference about
-where the salute ends and the body begins.
-
 YAML schema (any field may be ``null`` and is then omitted from TEI)::
 
     place:       str
@@ -20,14 +15,6 @@ YAML schema (any field may be ``null`` and is then omitted from TEI)::
       valediction: str
       signature:   str
 
-Inline bracket markers from the prompt are mapped to TEI as follows::
-
-    [word?]            -> <unclear cert="low">word</unclear>
-    [...]              -> <gap reason="illegible"/>
-    [damage: hole]     -> <gap reason="damage" agent="hole"/>
-    anything else      -> <note type="editorial">…</note>
-
-Output validates against ``tei_all.rng`` (referenced via xml-model PI).
 """
 from __future__ import annotations
 
@@ -190,8 +177,7 @@ def markdown_to_tei(
         _elem(
             "p",
             text=(
-                "Automated transcription produced with Gemini 3 and reviewed "
-                "by an editor."
+                "Automated transcription produced with Gemini 3."
             ),
         )
     )
