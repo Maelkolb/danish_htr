@@ -12,16 +12,33 @@ Layout:
     └──────────────────────────────┴───────────────────────────────────┘
 
 Images are base64-embedded so the file is single-artifact (no broken
-links when emailed or zipped). For a 20-page document at ~1MB/page this
-yields a ~30MB HTML — still fine for a browser, but if you need lighter
-output, swap the embed for relative ``<img src='…'>`` links.
+links when emailed or zipped).
 """
 from __future__ import annotations
 
 import base64
 import html
+import io
 from pathlib import Path
 from typing import Dict, List
+
+# ── image compression tunables ────────────────────────────────────────────────
+# Longest edge (px) after downscaling. 1 600 is comfortable for split-panel
+# reading. Raise to 2 000 for retina; drop to 1 200 for even smaller files.
+MAX_LONG_EDGE: int = 1_600
+
+# WebP quality 0-100. 50 is aggressive but legible for document text.
+# Raise to 60-65 if you see artefacts on very fine print or thin strokes.
+WEBP_QUALITY: int = 50
+
+# JPEG fallback quality (used only when the Pillow build lacks WebP support).
+JPEG_QUALITY: int = 55
+
+# Convert to greyscale before encoding?
+# True  → big savings for typical B&W / near-B&W document scans.
+# False → keep colour (useful for illuminated manuscripts, maps, colour forms).
+GREYSCALE: bool = True
+# ─────────────────────────────────────────────────────────────────────────────
 
 _HTML_TEMPLATE = """<!DOCTYPE html>
 <html lang="en">
@@ -249,75 +266,47 @@ _HTML_TEMPLATE = """<!DOCTYPE html>
 """
 
 
+def _embed_image(image_path: Path) -> str:
+    """Return a compressed data-URI for *image_path*.
 
-from __future__ import annotations
- 
-import base64
-import io
-from pathlib import Path
- 
-# ── tuneable constants ────────────────────────────────────────────────────────
- 
-MAX_LONG_EDGE: int = 1_600
- 
-# WebP quality 0-100.  50 is aggressive but still legible for document text.
-# Raise to 60-65 if you see visible artefacts on fine print or thin strokes.
-WEBP_QUALITY: int = 50
- 
-JPEG_QUALITY: int = 55
- 
-GREYSCALE: bool = True
- 
-# ─────────────────────────────────────────────────────────────────────────────
- 
- 
-def _embed_image(image_path: Path) -> str:  # noqa: D401
-    """Return a data-URI for *image_path* with aggressive lossy compression.
- 
-    This is a drop-in replacement for the original _embed_image function.
-    The signature and return type are identical; only the encoding strategy
-    changes.
+    Targets ~90 % size reduction vs raw base64 by combining:
+      1. Greyscale conversion  (drop 2 of 3 colour channels)
+      2. Downscale to MAX_LONG_EDGE px on the longest side
+      3. WebP lossy @ WEBP_QUALITY  (falls back to JPEG if WebP unavailable)
     """
-    from PIL import Image  # local import so the rest of the module loads without Pillow
- 
+    from PIL import Image  # local import — module loads fine without Pillow
+
     img = Image.open(image_path)
- 
-    # ── 1. flatten to RGB (or L) ──────────────────────────────────────────────
-    # RGBA / P (palette) modes can't be saved as JPEG / WebP without conversion.
+
+    # 1. Normalise mode — JPEG/WebP can't handle RGBA or palette images
     if img.mode == "RGBA":
-        # paste onto white background to avoid black halos on semi-transparent px
         bg = Image.new("RGB", img.size, (255, 255, 255))
         bg.paste(img, mask=img.split()[3])
         img = bg
     elif img.mode not in ("RGB", "L"):
         img = img.convert("RGB")
- 
-    # ── 2. optional greyscale conversion ─────────────────────────────────────
+
+    # 2. Greyscale (big win for B&W document scans; skip for colour content)
     if GREYSCALE and img.mode == "RGB":
         img = img.convert("L")
- 
-    # ── 3. downscale if needed (preserves aspect ratio) ──────────────────────
+
+    # 3. Downscale if the longest edge exceeds the cap
     long_edge = max(img.width, img.height)
     if long_edge > MAX_LONG_EDGE:
         scale = MAX_LONG_EDGE / long_edge
-        new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
-        img = img.resize(new_size, Image.LANCZOS)
- 
-    # ── 4. encode: WebP preferred, JPEG as fallback ──────────────────────────
+        new_w = max(1, int(img.width * scale))
+        new_h = max(1, int(img.height * scale))
+        img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    # 4. Encode — WebP preferred, JPEG as fallback
     buf = io.BytesIO()
     try:
         img.save(buf, format="WEBP", quality=WEBP_QUALITY, method=4)
-        # method=4 balances encode speed vs compression (0=fastest, 6=best)
         mime = "image/webp"
     except (KeyError, OSError):
-        # WebP encoder not available in this Pillow build → fall back to JPEG
-        if img.mode == "L":
-            img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
-        else:
-            img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True,
-                     progressive=True)
+        img.save(buf, format="JPEG", quality=JPEG_QUALITY, optimize=True)
         mime = "image/jpeg"
- 
+
     data = base64.b64encode(buf.getvalue()).decode("ascii")
     return f"data:{mime};base64,{data}"
 
@@ -328,16 +317,17 @@ def generate_html(
     output_path: Path | str,
     *,
     meta: str = "",
-    footer: str = "Transcribed with Gemini 3 · review before citing",
+    footer: str = "Transcribed with Gemini · review before citing",
 ) -> Path:
     """Render a self-contained split-panel viewer.
 
-    ``pages`` is a list of dicts, one per page:
+    ``pages`` is a list of dicts, one per page::
+
         {
-            "page": int,                 # 1-indexed page number
-            "image": Path,               # enhanced page image
-            "markdown_text": str,        # transcription markdown
-            "tei_text": str,             # TEI XML
+            "page": int,           # 1-indexed page number
+            "image": Path,         # enhanced page image
+            "markdown_text": str,  # transcription markdown
+            "tei_text": str,       # TEI XML
         }
     """
     output_path = Path(output_path)
@@ -359,21 +349,21 @@ def generate_html(
         image_parts.append(
             f'<div class="page-section {active}" data-page="{n}">'
             f'<img src="{img_data}" alt="Page {n}">'
-            f'</div>'
+            f"</div>"
         )
 
         md_text = p.get("markdown_text") or ""
         md_parts.append(
             f'<div class="page-section {active}" data-page="{n}">'
             f'<pre>{html.escape(md_text) or "<em class=empty>(no transcription)</em>"}</pre>'
-            f'</div>'
+            f"</div>"
         )
 
         tei_text = p.get("tei_text") or ""
         tei_parts.append(
             f'<div class="page-section {active}" data-page="{n}">'
             f'<pre>{html.escape(tei_text) or "<em class=empty>(no TEI output)</em>"}</pre>'
-            f'</div>'
+            f"</div>"
         )
 
     html_out = (
