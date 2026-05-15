@@ -1,15 +1,6 @@
 """Prompts for the transcription model.
-
-Kept in a separate module so they can be edited and version-controlled
-independently of the Python plumbing.
 """
 
-# Main per-page transcription prompt.
-#
-#   * YAML front matter is requested so the downstream TEI converter can
-#     extract structured metadata deterministically.
-#   * Output format is fully specified — no commentary, no markdown
-#     fences around the YAML.
 TRANSCRIPTION_PROMPT = """\
 You are an expert paleographer specialising in 19th-century Danish handwriting. You are
 looking at a scanned page of a Danish manuscript, most likely a letter or an
@@ -26,27 +17,31 @@ Transcribe everything you can read on the page. Apply these rules strictly:
 3. OUTPUT FORMAT. Produce UTF-8 markdown with a YAML front-matter block
    followed by the body. No commentary, no code fences, no preamble.
 
+   The YAML carries ALL document structure. The body markdown contains
+   ONLY the running text of body paragraphs — no dateline, no salutation,
+   no valediction, no signature. Those four belong in the YAML.
+
    ---
    place: <places named in document, or "?">
    date: <ISO YYYY-MM-DD if discernible, else the original form, or "?">
    addressee: <name/title of recipient if discernible, else "?">
    sender: <name/title of sender if visible, else "?">
    language: da
+   opener:
+     dateline: <verbatim dateline, e.g. "Brøns den 26de Marts 1841.", or "?">
+     salutation: <verbatim salutation, e.g. "Höistærede Herr Pavelsen!", or "?">
+   closer:
+     valediction: <verbatim closing phrase, e.g. "Deres ærbødige", or "?">
+     signature: <verbatim signature, e.g. "J. Bjerum", or "?">
    ---
-
-   <Place>, <Date written out>
-
-   <Salutation, e.g. "Höistærede Herr Pavelsen!">
 
    <Body paragraph 1.>
 
    <Body paragraph 2.>
+
    ...
 
-   <Closing valediction, e.g. "Deres ærbødige">
-   <Signature>
-
-6. Paragraphs are separated by a single blank line. Preserve manuscript line
+4. Paragraphs are separated by a single blank line. Preserve manuscript line
    breaks only inside lists, addresses, or verse — collapse them into prose
    for ordinary running text.
 """
